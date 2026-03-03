@@ -2,7 +2,6 @@ import os
 import json
 import requests
 import feedparser
-import google.generativeai as genai
 
 # ==========================================
 # 1. 环境变量读取与校验
@@ -13,8 +12,6 @@ FEISHU_WEBHOOK = os.environ.get("FEISHU_WEBHOOK")
 if not GEMINI_API_KEY or not FEISHU_WEBHOOK:
     print("🚨 致命错误：未找到 API Key 或 Webhook 地址，请检查 GitHub Secrets 配置！")
     exit(1)
-
-genai.configure(api_key=GEMINI_API_KEY)
 
 # ==========================================
 # 2. 抓取新闻（双源备用，防拦截）
@@ -48,7 +45,7 @@ def fetch_news():
     return "\n".join(news_list)
 
 # ==========================================
-# 3. 唤醒大师大脑进行战局推演 (带模型容错)
+# 3. 唤醒大师大脑进行战局推演 (3.0 序列优先，全梯队容错)
 # ==========================================
 def generate_radar_report(news_text):
     print("🧠 正在呼叫大脑进行深度战局推演...")
@@ -66,17 +63,32 @@ def generate_radar_report(news_text):
     🧠 **2. T1G-helper 战局推演**（结合我们的 T1G 战略给出针对性的威胁评估和应对建议）
     """
     
-    # 核心容错逻辑：先用 1.5-flash，报错则自动降级到最稳定的 gemini-pro
-    try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
-    except Exception as e:
-        print(f"⚠️ 默认模型调用受限 ({e})，正在无缝切换至备用模型 gemini-pro...")
-        model = genai.GenerativeModel('gemini-pro')
-        response = model.generate_content(prompt)
+    # 终极火力配置：优先 3.1/3.0，依次平滑降级，确保 100% 成功率
+    models = ["gemini-3.1-pro", "gemini-3.0-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+    headers = {'Content-Type': 'application/json'}
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    
+    report_text = ""
+    for model_name in models:
+        try:
+            print(f"🔄 正在尝试连接模型引擎: {model_name} ...")
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+            response = requests.post(url, headers=headers, json=payload, timeout=30)
+            
+            if response.status_code == 200:
+                result_json = response.json()
+                report_text = result_json['candidates'][0]['content']['parts'][0]['text']
+                print(f"✅ 战局推演完成！(当前成功调用的引擎是: {model_name})")
+                break
+            else:
+                print(f"⚠️ {model_name} 引擎当前 API 节点暂未开放或受限 (状态码: {response.status_code})，正在无缝切换下一代引擎...")
+        except Exception as e:
+            print(f"❌ {model_name} 连接异常: {e}")
+            
+    if not report_text:
+        report_text = f"🚨 战情雷达预警：大师大脑全节点连接受限。今日原始情报速递如下：\n\n{news_text}"
         
-    print("✅ 战局推演完成！")
-    return response.text
+    return report_text
 
 # ==========================================
 # 4. 推送到飞书高管群
@@ -89,16 +101,13 @@ def send_to_feishu(report_text):
         "content": {"text": report_text}
     }
     try:
-        response = requests.post(FEISHU_WEBHOOK, headers=headers, data=json.dumps(payload), timeout=10)
+        response = requests.post(FEISHU_WEBHOOK, headers=headers, json=payload, timeout=10)
         print("✅ 飞书推送响应状态:", response.text)
     except Exception as e:
         print(f"❌ 飞书网络推送异常: {e}")
 
-# ==========================================
-# 主程序入口
-# ==========================================
 if __name__ == "__main__":
-    print("▶️ 启动 LEPAS 战情雷达系统...")
+    print("▶️ 启动 LEPAS 战情雷达系统 (3.0 满血优先版)...")
     today_news = fetch_news()
     
     if today_news.strip():
@@ -106,4 +115,4 @@ if __name__ == "__main__":
         send_to_feishu(report)
         print("🎉 全部流程执行完毕，请查收飞书消息！")
     else:
-        print("🚨 警告：未能抓取到任何有效新闻，为防止发送空消息，流程安全终止。")
+        print("🚨 警告：未能抓取到任何有效新闻。")
