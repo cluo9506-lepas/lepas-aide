@@ -9,28 +9,38 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 FEISHU_WEBHOOK = os.environ.get("FEISHU_WEBHOOK")
 
 genai.configure(api_key=GEMINI_API_KEY)
-
-# 2. 抓取最新的汽车行业新闻 (增加防屏蔽的浏览器伪装)
+# 2. 抓取最新的汽车行业新闻 (采用双源备用机制，突破拦截)
 def fetch_news():
-    rss_url = "https://www.autohome.com.cn/rss/news.xml"
-    # 伪装成正常的电脑浏览器，突破汽车之家的拦截
+    # 优先使用 IT之家(涵盖极多新能源车战报)，备用新浪汽车
+    rss_urls = [
+        "https://www.ithome.com/rss/", 
+        "http://rss.sina.com.cn/news/allnews/auto.xml"
+    ]
+    
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
-    try:
-        print("📡 正在尝试突破拦截，抓取新闻...")
-        response = requests.get(rss_url, headers=headers, timeout=10)
-        feed = feedparser.parse(response.content)
-        news_list = []
-        for entry in feed.entries[:10]:
-            news_list.append(f"- {entry.title} ({entry.link})")
-        
-        print(f"✅ 成功抓取到 {len(news_list)} 条新闻。")
-        return "\n".join(news_list)
-    except Exception as e:
-        print(f"❌ 抓取新闻报错: {e}")
-        return ""
-
+    
+    news_list = []
+    for url in rss_urls:
+        try:
+            print(f"📡 正在尝试侦听情报源: {url}")
+            response = requests.get(url, headers=headers, timeout=10)
+            feed = feedparser.parse(response.content)
+            
+            # 只要拿到有效的 entries，就提取标题和链接
+            if len(feed.entries) > 0:
+                for entry in feed.entries[:10]:
+                    news_list.append(f"- {entry.title} ({entry.link})")
+                print(f"✅ 成功从该源窃取到 {len(news_list)} 条高价值情报！")
+                break # 拿到情报就立刻撤退，不再请求下一个源
+            else:
+                print("⚠️ 该源返回了 0 条数据，可能是被盾了，尝试下一个...")
+                
+        except Exception as e:
+            print(f"❌ 侦听该源时发生故障: {e}")
+            
+    return "\n".join(news_list)
 # 3. 唤醒 T1G-helper (Gemini 大脑) 进行战局推演
 def generate_radar_report(news_text):
     print("🧠 正在呼叫大师大脑进行深度战局推演...")
